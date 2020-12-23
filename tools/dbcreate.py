@@ -10,7 +10,8 @@ TABLES = [
  publicname varchar(16) unique not null,
  created varchar(24) not null,
  internalname varchar(12) not null,
- aeskey varchar(32) not null,
+ aeskey varchar(32),
+ aead varchar(72),
  active boolean default true,
  counter integer not null default 1,
  time integer not null default 1

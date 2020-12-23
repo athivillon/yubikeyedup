@@ -3,7 +3,7 @@ import sqlite3
 
 class SQL:
     REQUESTS = {
-        'yubico_get_key':	 'SELECT aeskey, internalname, counter, time FROM yubikeys WHERE publicname = ? AND active = 1',
+        'yubico_get_key':	 'SELECT aeskey, aead, internalname, counter, time FROM yubikeys WHERE publicname = ? AND active = 1',
         'yubico_update_counter': 'UPDATE yubikeys SET counter = ?, time = ? WHERE publicname = ?',
 
         'oath_get_token':	 'SELECT counter, secret FROM oathtokens WHERE publicname = ? AND active = 1',

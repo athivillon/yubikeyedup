@@ -2,6 +2,11 @@ import re
 
 from Cryptodome.Cipher import AES
 
+from yubihsm import YubiHsm
+from yubihsm.defs import CAPABILITY, ALGORITHM, OBJECT
+from yubihsm.objects import AsymmetricKey
+import yubihsm.exceptions
+
 from sql import *
 import yubistatus
 
@@ -40,7 +45,7 @@ class Yubico(Validate):
                 if n != 0:
                     crc ^= 0x8408
         return crc
-
+   
     def validate(self):
         match = re.match('([cbdefghijklnrtuv]{0,16})([cbdefghijklnrtuv]{32})', self.otp)
         if not match:
@@ -51,26 +56,66 @@ class Yubico(Validate):
 
         if not self.sql.select('yubico_get_key', [userid]):
             return yubistatus.BAD_OTP
-        aeskey, internalname, counter, time = self.sql.result
+        aeskey, aead, internalname, counter, time = self.sql.result
+        if aeskey == None and aead == None :
+              return yubistatus.BAD_OTP
 
-        aes = AES.new(bytes.fromhex(aeskey), AES.MODE_ECB)
-        plaintext = aes.decrypt(self.modhexdecode(token)).hex()
+        if (aeskey != None) :
 
-        if internalname != plaintext[:12]:
-            return yubistatus.BAD_OTP
+            aes = AES.new(bytes.fromhex(aeskey), AES.MODE_ECB)
+            plaintext = aes.decrypt(self.modhexdecode(token)).hex()
+    
+            if internalname != plaintext[:12]:
+                return yubistatus.BAD_OTP
+    
+            # if self.CRC(plaintext[:32].decode('hex')) != 0xf0b8:
+            if self.CRC(bytes.fromhex(plaintext[:32])) != 0xf0b8:
+                return yubistatus.BAD_OTP
+    
+            internalcounter = int(plaintext[14:16] + plaintext[12:14] + plaintext[22:24], 16)
+            if counter >= internalcounter:
+                return yubistatus.REPLAYED_OTP
+    
+            timestamp = int(plaintext[20:22] + plaintext[18:20] + plaintext[16:18], 16)
+            if time >= timestamp and (counter >> 8) == (internalcounter >> 8):
+                return yubistatus.BAD_OTP
 
-        # if self.CRC(plaintext[:32].decode('hex')) != 0xf0b8:
-        if self.CRC(bytes.fromhex(plaintext[:32])) != 0xf0b8:
-            return yubistatus.BAD_OTP
+        else :
+            # try AEAD
+            # Connect to the YubiHSM via the connector using the default password:
+            try : 
+               hsm = YubiHsm.connect('http://127.0.0.1:12345')
+               session = hsm.create_session_derived(1, '14011944')
+               aead_key_id = 0x8920
 
-        internalcounter = int(plaintext[14:16] + plaintext[12:14] + plaintext[22:24], 16)
-        if counter >= internalcounter:
-            return yubistatus.REPLAYED_OTP
+               aead_key = session.get_object(aead_key_id, OBJECT.OTP_AEAD_KEY  )
+               aead1 = bytes.fromhex(aead)
+            except yubihsm.exceptions.YubiHsmError :
+              return yubistatus.BACKEND_ERROR
 
-        timestamp = int(plaintext[20:22] + plaintext[18:20] + plaintext[16:18], 16)
-        if time >= timestamp and (counter >> 8) == (internalcounter >> 8):
-            return yubistatus.BAD_OTP
+            try : 
+               otp_return = aead_key.decrypt_otp(aead1, self.modhexdecode(token))
+               internalcounter =( otp_return.use_counter << 8) + otp_return.session_counter
+               if counter >= internalcounter :
+                  print("counter error",counter,internalcounter)
+                  return yubistatus.REPLAYED_OTP
+               timestamp = (otp_return.timestamp_high << 16) + otp_return.timestamp_low
+               if time >= timestamp and (counter >> 8) == otp_return.use_counter :
+                  print("timestamp error",time,timestamp)
+                  return yubistatus.BAD_OTP
 
+            except yubihsm.exceptions.YubiHsmDeviceError as yubierror:
+               print(yubierror)
+               return yubistatus.BAD_OTP
+
+            except yubihsm.exceptions.YubiHsmError:
+               return yubistatus.BAD_OTP
+
+            finally:
+               # Clean up
+               session.close()
+               hsm.close()
+    
         self.sql.update('yubico_update_counter', [internalcounter, timestamp, userid])
 
         return yubistatus.OK

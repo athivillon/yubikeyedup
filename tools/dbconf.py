@@ -23,6 +23,7 @@ def randomChars(size):
 def usage():
     print('Usage: %s <options> <db.sqlite3>\n' % sys.argv[0])
     print(' -ya <nickname> <publicid> <secretid> <aeskey>\tAdd a new Yubikey')
+    print(' -yae <nickname> <publicid> <secretid> <aead>\tAdd a new Yubikey in AEAD format')
     print(' -yk <nickname>\t\t\t\t\tDelete a Yubikey')
     print(' -yd <nickname>\t\t\t\t\tDisable a Yubikey')
     print(' -ye <nickname>\t\t\t\t\tEnable a Yubikey')
@@ -47,7 +48,8 @@ class DBConf:
         'y_set_active':		'UPDATE yubikeys SET active = ? WHERE nickname = ?',
         'y_delete':		'DELETE FROM yubikeys WHERE nickname = ?',
         'y_count_nickname':	'SELECT count(nickname) FROM yubikeys WHERE nickname = ? OR publicname = ?',
-        'y_add':		'INSERT INTO yubikeys VALUES (?, ?, ?, ?, ?, 1, 1, 1)',
+        'y_add':		'INSERT INTO yubikeys VALUES (?, ?, ?, ?, ?, NULL, 1, 1, 1)',
+        'y_add_aead':		'INSERT INTO yubikeys VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 1)',
 
         'oath_get_active':	'SELECT active FROM oathtokens WHERE nickname = ?',
         'oath_set_active':	'UPDATE oathtokens SET active = ? WHERE nickname = ?',
@@ -95,6 +97,22 @@ class Yubikey(DBConf):
         t = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         self.update('y_add', [ nickname, publicid, t, secretid, aeskey ])
         self.log('Key %s added to database.' % nickname)
+
+    def add_aead(self, nickname, publicid, secretid, aead):
+        if len(nickname) > 16 or len(publicid) > 16 or len(secretid) > 12 or len(aead) > 72:
+            print('Nickname and publicid must be max 16 characters long.')
+            print('Secretid must be 12 characters max, aead must be 72 characters max.')
+            return -1
+
+        self.select('y_count_nickname', [nickname, publicid])
+        if self.result[0] != 0:
+            self.log('Key is already into database. Delete it before adding the same key!')
+            return -1
+
+        t = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        self.update('y_add_aead', [ nickname, publicid, t, secretid, aead ])
+        self.log('Key %s added to database.' % nickname)
+
 
     def delete(self, nickname):
         if not self.select('y_get_active', [ nickname ]):
@@ -254,6 +272,7 @@ class API(DBConf):
 if __name__ == '__main__':
     options = {
         '-ya': (4, Yubikey, 'add'),
+        '-yae': (4, Yubikey, 'add_aead'),
         '-yk': (1, Yubikey, 'delete'),
         '-yd': (1, Yubikey, 'disable'),
         '-ye': (1, Yubikey, 'enable'),
