@@ -31,7 +31,7 @@ TABLES = [
 )''',
 '''params(
  param varchar(32),
- value varchar(128),
+ value varchar(128)
 )''',
 ]
 
