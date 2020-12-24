@@ -14,7 +14,11 @@ import yubistatus
 class Validate:
     def __init__(self, sql):
         self.sql = sql
-
+        self.yubihsm_url  = sql.get_parameter('yubihsm_url',None)
+        self.aeadkey_id   = int(sql.get_parameter('aeadkey_id','8920'),16)
+        self.yubihsm_auth = int(sql.get_parameter('yubihsm_auth', '1'),16)
+        self.yubihsm_pass = sql.get_parameter('yubihsm_pass', 'password')
+       
 
 class Yubico(Validate):
     # sorry for this one-liner
@@ -80,20 +84,20 @@ class Yubico(Validate):
             if time >= timestamp and (counter >> 8) == (internalcounter >> 8):
                 return yubistatus.BAD_OTP
 
-        else :
+        elif self.yubihsm_url != None :
             # try AEAD
-            # Connect to the YubiHSM via the connector using the default password:
             try : 
-               hsm = YubiHsm.connect('http://127.0.0.1:12345')
-               session = hsm.create_session_derived(1, '14011944')
-               aead_key_id = 0x8920
+               hsm = YubiHsm.connect(self.yubihsm_url)
+               session = hsm.create_session_derived(self.yubihsm_auth, self.yubihsm_pass)
 
-               aead_key = session.get_object(aead_key_id, OBJECT.OTP_AEAD_KEY  )
+               aead_key = session.get_object(self.aeadkey_id, OBJECT.OTP_AEAD_KEY  )
+
+            except yubihsm.exceptions.YubiHsmError as e :
+               print("Error connecting to YubiHSM",e)
+               return yubistatus.BACKEND_ERROR
+
+            try : 
                aead1 = bytes.fromhex(aead)
-            except yubihsm.exceptions.YubiHsmError :
-              return yubistatus.BACKEND_ERROR
-
-            try : 
                otp_return = aead_key.decrypt_otp(aead1, self.modhexdecode(token))
                internalcounter =( otp_return.use_counter << 8) + otp_return.session_counter
                if counter >= internalcounter :
@@ -105,16 +109,21 @@ class Yubico(Validate):
                   return yubistatus.BAD_OTP
 
             except yubihsm.exceptions.YubiHsmDeviceError as yubierror:
-               print(yubierror)
+               print("Error decoding OTP",yubierror)
                return yubistatus.BAD_OTP
 
-            except yubihsm.exceptions.YubiHsmError:
+            except yubihsm.exceptions.YubiHsmError as yubierror:
+               print("Error decoding OTP",yubierror)
                return yubistatus.BAD_OTP
 
             finally:
                # Clean up
                session.close()
                hsm.close()
+
+        else:
+            return yubistatus.BACKEND_ERROR
+
     
         self.sql.update('yubico_update_counter', [internalcounter, timestamp, userid])
 

@@ -29,6 +29,10 @@ TABLES = [
  secret varchar(28),
  id integer primary key
 )''',
+'''params(
+ param varchar(32),
+ value varchar(128),
+)''',
 ]
 
 def create_db(filename):

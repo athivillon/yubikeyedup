@@ -10,6 +10,7 @@ class SQL:
         'oath_update_counter':	 'UPDATE oathtokens SET counter = ? WHERE publicname = ?',
 
         'get_api_secret':	 'SELECT secret from apikeys WHERE id = ?',
+        'get_param':             'SELECT value from params WHERE param = ?',
     }
 
     def __init__(self, con):
@@ -25,5 +26,19 @@ class SQL:
         self.con.execute(self.REQUESTS[req], param)
         self.con.commit()
 
+    def get_parameter(self, param, default):
+        try :
+           self.result = None
+           self.cur.execute(self.REQUESTS['get_param'], [param] )
+           self.result = self.cur.fetchone()[0]
+        except:
+           pass
+        if self.result == None:
+           return default
+        else:
+           return self.result
+
+
 def connect_to_db(filename):
     return sqlite3.connect(filename, check_same_thread=False)
+
