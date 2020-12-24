@@ -12,6 +12,11 @@ import sqlite3
 import sys
 import time
 
+from yubihsm import YubiHsm
+from yubihsm.defs import CAPABILITY, ALGORITHM, OBJECT
+from yubihsm.objects import AsymmetricKey
+import yubihsm.exceptions
+
 
 def randomChars(size):
     data = bytes()
@@ -24,6 +29,7 @@ def usage():
     print('Usage: %s <options> <db.sqlite3>\n' % sys.argv[0])
     print(' -ya <nickname> <publicid> <secretid> <aeskey>\tAdd a new Yubikey')
     print(' -yae <nickname> <publicid> <secretid> <aead>\tAdd a new Yubikey in AEAD format')
+    print(' -ym <nickname>\t\t\t\t\tMigrate AES key to AEAD (using HSM params in database)')
     print(' -yk <nickname>\t\t\t\t\tDelete a Yubikey')
     print(' -yd <nickname>\t\t\t\t\tDisable a Yubikey')
     print(' -ye <nickname>\t\t\t\t\tEnable a Yubikey')
@@ -50,6 +56,7 @@ class DBConf:
         'y_count_nickname':	'SELECT count(nickname) FROM yubikeys WHERE nickname = ? OR publicname = ?',
         'y_add':		'INSERT INTO yubikeys VALUES (?, ?, ?, ?, ?, NULL, 1, 1, 1)',
         'y_add_aead':		'INSERT INTO yubikeys VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 1)',
+        'y_migrate_aead':	'UPDATE yubikeys SET aead = ?, aeskey = NULL where nickname = ?',
 
         'oath_get_active':	'SELECT active FROM oathtokens WHERE nickname = ?',
         'oath_set_active':	'UPDATE oathtokens SET active = ? WHERE nickname = ?',
@@ -61,6 +68,9 @@ class DBConf:
         'api_count_nicknames':	'SELECT count(nickname) FROM apikeys',
         'api_get_last_id':	'SELECT id FROM apikeys ORDER BY id DESC LIMIT 1',
         'api_add':		'INSERT INTO apikeys VALUES (?, ?, ?)',
+
+        'get_param':            'SELECT value FROM params WHERE param = ?',
+        'get_key':              'SELECT aeskey, aead, internalname FROM yubikeys WHERE nickname = ?',
     }
 
     def __init__(self, filename, verbose=True):
@@ -113,6 +123,37 @@ class Yubikey(DBConf):
         self.update('y_add_aead', [ nickname, publicid, t, secretid, aead ])
         self.log('Key %s added to database.' % nickname)
 
+
+    def migrate(self,nickname):
+        if not self.select('y_get_active', [ nickname ]):
+            self.log('Key not found.')
+            return -1
+
+        self.select('get_param',['yubihsm_url'])
+        self.yubihsm_url  = self.result[0]
+        self.select('get_param',['aeadkey_id'])
+        self.aeadkey_id   = int(self.result[0],16)
+        self.select('get_param',['yubihsm_auth'])
+        self.yubihsm_auth = int(self.result[0],16)
+        self.select('get_param',['yubihsm_pass'])
+        self.yubihsm_pass = self.result[0]
+
+        hsm = YubiHsm.connect(self.yubihsm_url)
+        session = hsm.create_session_derived(self.yubihsm_auth, self.yubihsm_pass)
+        aead_key = session.get_object(self.aeadkey_id, OBJECT.OTP_AEAD_KEY  )
+
+        
+        self.select('get_key',[nickname])
+        aes, aead_old, internalname = self.result
+        if (aead_old != None) :
+            self.log('AEAD already set !')
+            return -1
+       
+        aead = aead_key.create_otp_aead(bytes.fromhex(aes), bytes.fromhex(internalname)) 
+
+        self.update('y_migrate_aead', [ aead.hex(), nickname ])
+        self.log('Key %s migrated.' % nickname)
+        
 
     def delete(self, nickname):
         if not self.select('y_get_active', [ nickname ]):
@@ -276,6 +317,7 @@ if __name__ == '__main__':
         '-yk': (1, Yubikey, 'delete'),
         '-yd': (1, Yubikey, 'disable'),
         '-ye': (1, Yubikey, 'enable'),
+        '-ym': (1, Yubikey, 'migrate'),
         '-yl': (0, Yubikey, 'list'),
 
         '-ha': (3, OATH, 'add'),
