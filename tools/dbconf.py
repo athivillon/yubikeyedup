@@ -29,7 +29,7 @@ def usage():
     print('Usage: %s <options> <db.sqlite3>\n' % sys.argv[0])
     print(' -ya <nickname> <publicid> <secretid> <aeskey>\tAdd a new Yubikey')
     print(' -yae <nickname> <publicid> <secretid> <aead>\tAdd a new Yubikey in AEAD format')
-    print(' -ym <nickname>\t\t\t\t\tMigrate AES key to AEAD (using HSM params in database)')
+    print(' -ym <nickname> <authkey> <passord>\t\tMigrate AES key to AEAD (using HSM params in database)')
     print(' -yk <nickname>\t\t\t\t\tDelete a Yubikey')
     print(' -yd <nickname>\t\t\t\t\tDisable a Yubikey')
     print(' -ye <nickname>\t\t\t\t\tEnable a Yubikey')
@@ -124,7 +124,7 @@ class Yubikey(DBConf):
         self.log('Key %s added to database.' % nickname)
 
 
-    def migrate(self,nickname):
+    def migrate(self,nickname,authkey,password):
         if not self.select('y_get_active', [ nickname ]):
             self.log('Key not found.')
             return -1
@@ -133,10 +133,9 @@ class Yubikey(DBConf):
         self.yubihsm_url  = self.result[0]
         self.select('get_param',['aeadkey_id'])
         self.aeadkey_id   = int(self.result[0],16)
-        self.select('get_param',['yubihsm_auth'])
-        self.yubihsm_auth = int(self.result[0],16)
-        self.select('get_param',['yubihsm_pass'])
-        self.yubihsm_pass = self.result[0]
+
+        self.yubihsm_auth = int(authkey,16)
+        self.yubihsm_pass = password
 
         hsm = YubiHsm.connect(self.yubihsm_url)
         session = hsm.create_session_derived(self.yubihsm_auth, self.yubihsm_pass)
@@ -317,7 +316,7 @@ if __name__ == '__main__':
         '-yk': (1, Yubikey, 'delete'),
         '-yd': (1, Yubikey, 'disable'),
         '-ye': (1, Yubikey, 'enable'),
-        '-ym': (1, Yubikey, 'migrate'),
+        '-ym': (3, Yubikey, 'migrate'),
         '-yl': (0, Yubikey, 'list'),
 
         '-ha': (3, OATH, 'add'),
