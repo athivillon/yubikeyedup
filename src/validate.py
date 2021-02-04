@@ -2,6 +2,8 @@ import re
 
 from Cryptodome.Cipher import AES
 
+import syslog
+
 from yubihsm import YubiHsm
 from yubihsm.defs import CAPABILITY, ALGORITHM, OBJECT
 from yubihsm.objects import AsymmetricKey
@@ -9,6 +11,7 @@ import yubihsm.exceptions
 
 from sql import *
 import yubistatus
+
 
 
 class Validate:
@@ -26,6 +29,7 @@ class Yubico(Validate):
 
     def set_params(self, params, answer):
         if 'nonce' not in params:
+            syslog.syslog(syslog.LOG_ERR,params['client_ip'] + ":" + yubistatus.MISSING_PARAMETER)
             return yubistatus.MISSING_PARAMETER
 
         answer['otp'] = params['otp']
@@ -33,6 +37,7 @@ class Yubico(Validate):
         answer['sl'] = '100'
 
         self.otp = params['otp']
+        self.client_ip = params['client_ip']
 
         return yubistatus.OK
 
@@ -54,14 +59,17 @@ class Yubico(Validate):
         match = re.match('([cbdefghijklnrtuv]{0,16})([cbdefghijklnrtuv]{32})', self.otp)
         if not match:
             # this should not happen because otp matches YubiHTTPServer.PARAM_REGEXP
+            syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BACKEND_ERROR + ":ERR_PARAM_REGEXP")
             return yubistatus.BACKEND_ERROR
 
         userid, token = match.groups()
 
         if not self.sql.select('yubico_get_key', [userid]):
+            syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid + ":NO_SUCH_USER")
             return yubistatus.BAD_OTP
         aeskey, aead, internalname, counter, time = self.sql.result
         if aeskey == None and aead == None :
+              syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid + ":NO_KEY_IN_DATABASE")
               return yubistatus.BAD_OTP
 
         if (aeskey != None) :
@@ -70,18 +78,22 @@ class Yubico(Validate):
             plaintext = aes.decrypt(self.modhexdecode(token)).hex()
     
             if internalname != plaintext[:12]:
+                syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid + ":BAD_DECRYPT")
                 return yubistatus.BAD_OTP
     
             # if self.CRC(plaintext[:32].decode('hex')) != 0xf0b8:
             if self.CRC(bytes.fromhex(plaintext[:32])) != 0xf0b8:
+                syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid + ":BAD_CRC")
                 return yubistatus.BAD_OTP
     
             internalcounter = int(plaintext[14:16] + plaintext[12:14] + plaintext[22:24], 16)
             if counter >= internalcounter:
+                syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.REPLAYED_OTP + ":" + userid + ":BAD_COUNTER")
                 return yubistatus.REPLAYED_OTP
     
             timestamp = int(plaintext[20:22] + plaintext[18:20] + plaintext[16:18], 16)
             if time >= timestamp and (counter >> 8) == (internalcounter >> 8):
+                syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.REPLAYED_OTP + ":" + userid + "BAD_TIMESTAMP")
                 return yubistatus.BAD_OTP
 
         elif self.yubihsm_url != None :
@@ -93,7 +105,7 @@ class Yubico(Validate):
                aead_key = session.get_object(self.aeadkey_id, OBJECT.OTP_AEAD_KEY  )
 
             except yubihsm.exceptions.YubiHsmError as e :
-               print("Error connecting to YubiHSM",e)
+               syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid +  ":ERR_YUBIHSM")
                return yubistatus.BACKEND_ERROR
 
             try : 
@@ -101,19 +113,19 @@ class Yubico(Validate):
                otp_return = aead_key.decrypt_otp(aead1, self.modhexdecode(token))
                internalcounter =( otp_return.use_counter << 8) + otp_return.session_counter
                if counter >= internalcounter :
-                  print("counter error",counter,internalcounter)
+                  syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.REPLAYED_OTP + ":" + userid + ":BAD_COUNTER")
                   return yubistatus.REPLAYED_OTP
                timestamp = (otp_return.timestamp_high << 16) + otp_return.timestamp_low
                if time >= timestamp and (counter >> 8) == otp_return.use_counter :
-                  print("timestamp error",time,timestamp)
+                  syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.REPLAYED_OTP + ":" + userid + ":BAD_TIMESTAMP")
                   return yubistatus.BAD_OTP
 
             except yubihsm.exceptions.YubiHsmDeviceError as yubierror:
-               print("Error decoding OTP",yubierror)
+               syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid + ":" + "YUBIHSM_DEVICERROR_PROBABLY_BADOTP")
                return yubistatus.BAD_OTP
 
             except yubihsm.exceptions.YubiHsmError as yubierror:
-               print("Error decoding OTP",yubierror)
+               syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BAD_OTP + ":" + userid + ":" + "YUBIHSM_ERROR")
                return yubistatus.BAD_OTP
 
             finally:
@@ -126,6 +138,7 @@ class Yubico(Validate):
 
     
         self.sql.update('yubico_update_counter', [internalcounter, timestamp, userid])
+        syslog.syslog(syslog.LOG_INFO,self.client_ip + ":" + yubistatus.OK + ":" + userid)
 
         return yubistatus.OK
 

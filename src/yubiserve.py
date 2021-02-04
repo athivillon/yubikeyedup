@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.request, urllib.parse, urllib.error
 import urllib.parse
+import syslog
 
 import yubistatus
 import validate
@@ -52,10 +53,12 @@ class YubiServeHandler:
 
         # API id and OTP are required
         if 'id' not in self.params or 'otp' not in self.params:
+            syslog.syslog(syslog.LOG_ERR, self.params['client_ip'] + ":" + yubistatus.MISSING_PARAMETER)
             return self.build_answer(yubistatus.MISSING_PARAMETER, answer)
 
         # ensure API id is valid
         if not self.sql.select('get_api_secret', [self.params['id']]):
+            syslog.syslog(syslog.LOG_ERR, self.params['client_ip'] + ":" +  yubistatus.NO_SUCH_CLIENT)
             return self.build_answer(yubistatus.NO_SUCH_CLIENT, answer)
 
         api_key = base64.b64decode(self.sql.result[0])
@@ -88,6 +91,7 @@ class YubiHTTPServer(http.server.BaseHTTPRequestHandler):
     def __init__(self, request, client_address, server):
         global sqlite_db
         self.sql_connection = connect_to_db(sqlite_db)
+        self.client_address = client_address
         return http.server.BaseHTTPRequestHandler.__init__(self, request, client_address, server)
 
     def setup(self):
@@ -104,6 +108,7 @@ class YubiHTTPServer(http.server.BaseHTTPRequestHandler):
             value = urllib.parse.unquote_plus(value)
             if key in self.PARAM_REGEXP and re.match(self.PARAM_REGEXP[key], value):
                 dict[key] = value
+        dict['client_ip'] = self.client_address[0]
         return dict
 
     def do_GET(self):
@@ -145,6 +150,8 @@ if __name__ == '__main__':
     yubiserveHTTP = ThreadingHTTPServer((options.host, int(options.port)), YubiHTTPServer)
 
     signal.signal(signal.SIGINT, stop_signal_handler)
+
+    syslog.openlog(ident="yubikey-validation-server",facility=syslog.LOG_AUTH,logoption=syslog.LOG_PID|syslog.LOG_NDELAY)
 
     http_thread = threading.Thread(target=yubiserveHTTP.serve_forever)
     http_thread.setDaemon(True)
