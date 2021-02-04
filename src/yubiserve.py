@@ -53,12 +53,12 @@ class YubiServeHandler:
 
         # API id and OTP are required
         if 'id' not in self.params or 'otp' not in self.params:
-            syslog.syslog(syslog.LOG_ERR, self.params['client_ip'] + ":" + yubistatus.MISSING_PARAMETER)
+            syslog.syslog(syslog.LOG_ERR, self.params['client_ip'] + ":" + yubistatus.MISSING_PARAMETER + "::" )
             return self.build_answer(yubistatus.MISSING_PARAMETER, answer)
 
         # ensure API id is valid
         if not self.sql.select('get_api_secret', [self.params['id']]):
-            syslog.syslog(syslog.LOG_ERR, self.params['client_ip'] + ":" +  yubistatus.NO_SUCH_CLIENT)
+            syslog.syslog(syslog.LOG_ERR, self.params['client_ip'] + ":" +  yubistatus.NO_SUCH_CLIENT + "::")
             return self.build_answer(yubistatus.NO_SUCH_CLIENT, answer)
 
         api_key = base64.b64decode(self.sql.result[0])

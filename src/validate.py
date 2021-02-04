@@ -29,7 +29,7 @@ class Yubico(Validate):
 
     def set_params(self, params, answer):
         if 'nonce' not in params:
-            syslog.syslog(syslog.LOG_ERR,params['client_ip'] + ":" + yubistatus.MISSING_PARAMETER)
+            syslog.syslog(syslog.LOG_ERR,params['client_ip'] + ":" + yubistatus.MISSING_PARAMETER + "::")
             return yubistatus.MISSING_PARAMETER
 
         answer['otp'] = params['otp']
@@ -59,7 +59,7 @@ class Yubico(Validate):
         match = re.match('([cbdefghijklnrtuv]{0,16})([cbdefghijklnrtuv]{32})', self.otp)
         if not match:
             # this should not happen because otp matches YubiHTTPServer.PARAM_REGEXP
-            syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BACKEND_ERROR + ":ERR_PARAM_REGEXP")
+            syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.BACKEND_ERROR + "::ERR_PARAM_REGEXP")
             return yubistatus.BACKEND_ERROR
 
         userid, token = match.groups()
@@ -93,7 +93,7 @@ class Yubico(Validate):
     
             timestamp = int(plaintext[20:22] + plaintext[18:20] + plaintext[16:18], 16)
             if time >= timestamp and (counter >> 8) == (internalcounter >> 8):
-                syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.REPLAYED_OTP + ":" + userid + "BAD_TIMESTAMP")
+                syslog.syslog(syslog.LOG_ERR,self.client_ip + ":" + yubistatus.REPLAYED_OTP + ":" + userid + ":BAD_TIMESTAMP")
                 return yubistatus.BAD_OTP
 
         elif self.yubihsm_url != None :
@@ -138,7 +138,7 @@ class Yubico(Validate):
 
     
         self.sql.update('yubico_update_counter', [internalcounter, timestamp, userid])
-        syslog.syslog(syslog.LOG_INFO,self.client_ip + ":" + yubistatus.OK + ":" + userid)
+        syslog.syslog(syslog.LOG_INFO,self.client_ip + ":" + yubistatus.OK + ":" + userid + ":")
 
         return yubistatus.OK
 
